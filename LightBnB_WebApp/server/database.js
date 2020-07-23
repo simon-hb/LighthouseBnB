@@ -94,7 +94,7 @@ const getAllReservations = function(guest_id, limit = 10) {
   WHERE reservations.guest_id = $1 AND reservations.end_date < now()::date
   GROUP BY properties.id, reservations.id
   ORDER BY reservations.start_date
-  LIMIT $2;
+  LIMIT $2
 `, [guest_id, limit])
 .then(res => res.rows)
 .catch(err => null);
@@ -111,10 +111,58 @@ exports.getAllReservations = getAllReservations;
  * @return {Promise<[{}]>}  A promise to the properties.
  */
 const getAllProperties = function(options, limit = 10) {
-  return pool.query(`
-  SELECT * FROM properties
-  LIMIT $1
-  `, [limit])
+  // 1
+  const queryParams = [];
+  let whereOrAnd;
+  // 2
+  let queryString = `
+  SELECT properties.*, avg(property_reviews.rating) as average_rating
+  FROM properties
+  JOIN property_reviews ON properties.id = property_id
+  `;
+
+  // 3
+  if (options.city) {
+    queryParams.push(`%${options.city}%`);
+    queryString += `WHERE city LIKE $${queryParams.length} `;
+  }
+
+  if (options.owner_id ) {
+    whereOrAnd = (queryParams.length === 0 ? 'WHERE' : 'AND');
+    queryParams.push(`${options.owner_id}`);
+    queryString += `${whereOrAnd} owner_id = $${queryParams.length} `
+  }
+
+  if (options.minimum_price_per_night && options.maximum_price_per_night) {
+    const minPriceDollars = options.minimum_price_per_night * 100;
+    const maxPriceDollars = options.maximum_price_per_night * 100;
+    whereOrAnd = (queryParams.length === 0 ? 'WHERE' : 'AND');
+    queryParams.push(`${minPriceDollars}`, `${maxPriceDollars}`);
+    queryString += `${whereOrAnd} cost_per_night BETWEEN $${queryParams.length - 1}  AND $${queryParams.length} `
+  }
+
+  //3.5 GROUP BY clause comes before having
+  queryString += `
+  GROUP BY properties.id
+  `
+
+  if (options.minimum_rating) {
+    queryParams.push(`${options.minimum_rating}`);
+    queryString += `HAVING avg(property_reviews.rating) >= $${queryParams.length}`
+  }
+
+  // 4
+  queryParams.push(limit);
+  queryString += `
+  ORDER BY cost_per_night
+  LIMIT $${queryParams.length};
+  `;
+
+  // 5 commented out console log since working
+  //console.log(queryString, queryParams);
+
+  // 6
+  return pool.query(queryString, queryParams)
   .then(res => res.rows);
 }
 exports.getAllProperties = getAllProperties;
